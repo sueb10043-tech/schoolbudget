@@ -1,19 +1,17 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>학교 예산 관리 시스템 - 교사용_예산</title>
-    <!-- 라이브러리 로드 (안정적인 버전) -->
+    <!-- Core Libraries -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
-    
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700;900&display=swap');
         body { font-family: 'Noto Sans KR', sans-serif; background-color: #f8f9fa; -webkit-font-smoothing: antialiased; }
-        /* 숫자 입력 필드 화살표 제거 */
         input::-webkit-outer-spin-button, input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
         input[type=number] { -moz-appearance: textfield; }
         .fade-in { animation: fadeIn 0.3s ease-out forwards; }
@@ -22,16 +20,15 @@
 </head>
 <body>
     <div id="root"></div>
-
     <script type="text/babel">
         const { useState, useEffect, useMemo } = React;
 
-        // --- ⚠️ 주요 설정 : 구글 앱스 스크립트 배포 URL을 여기에 넣으세요 ⚠️ ---
-        const BASE_URL = "https://script.google.com/macros/s/AKfycbzisD83mPvGFnhfTmbvI5yFr2Eai20U1eZP2w9U0oH5oeNj49W9nIDz7N56Kknk_r4C/exec"; 
-        // "교사용_예산" 시트와 강제 연결하는 주소 조합
+        // --- ⚠️ 주요 설정 : 새로 바뀐 GAS URL을 아래 큰따옴표 안에 넣으세요 ⚠️ ---
+        const BASE_URL = "https://script.google.com/macros/s/AKfycbzoCgmF_cfpNOaImXQ7yY0UPOZ5eDuH1whp7NKTdEAvjPWGO6y5GzvafqySyy3Oul1l/exec"; 
+        
+        // "교사용_예산" 시트와 강제로 연결하는 최종 주소
         const GAS_URL = BASE_URL + (BASE_URL.includes("?") ? "&" : "?") + "sheet=교사용_예산";
 
-        // --- 아이콘 컴포넌트 (SVG 직접 구현으로 충돌 방지) ---
         const Icon = ({ name, className = "w-4 h-4" }) => {
             const icons = {
                 wallet: <path d="M21 12V7H5a2 2 0 0 1 0-4h14v4M3 5v14a2 2 0 0 0 2 2h16v-5M18 12a2 2 0 0 0 0 4h4v-4Z"/>,
@@ -67,7 +64,7 @@
             const [newBudget, setNewBudget] = useState({ name: '', method: '', plannedAmount: 0, notes: '' });
             const [newTransaction, setNewTransaction] = useState({ date: new Date().toISOString().split('T')[0], description: '', location: '', notes: '', amount: 0 });
 
-            // 초기 데이터 로드 (구글 시트로부터)
+            // 데이터 로드
             useEffect(() => {
                 if (!BASE_URL || BASE_URL.includes("URL을")) { setLoading(false); return; }
                 fetch(GAS_URL).then(r => r.json()).then(data => {
@@ -75,17 +72,12 @@
                 }).catch(() => setLoading(false));
             }, []);
 
-            // 클라우드 동기화 (구글 시트에 저장)
-            const syncToCloud = async (b, t) => {
+            // 데이터 저장
+            const sync = async (b, t) => {
                 if (!BASE_URL || BASE_URL.includes("URL을")) return;
                 setSyncing(true);
-                try { 
-                    await fetch(GAS_URL, { 
-                        method: 'POST', 
-                        mode: 'no-cors', // CORS 정책 우회 (GAS 특성)
-                        body: JSON.stringify({ budgets: b, transactions: t }) 
-                    }); 
-                } catch (e) { console.error("Sync Error", e); }
+                try { await fetch(GAS_URL, { method: 'POST', body: JSON.stringify({ budgets: b, transactions: t }) }); } 
+                catch (e) { console.error(e); }
                 setSyncing(false);
             };
 
@@ -93,34 +85,32 @@
             const toNum = (s) => Number(s.toString().replace(/[^0-9]/g, '')) || 0;
             const toDisp = (v) => v === 0 ? '' : v.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 
-            // 전체 요약 데이터 계산
-            const totalStatus = useMemo(() => {
+            const total = useMemo(() => {
                 const p = budgets.reduce((s, b) => s + (Number(b.plannedAmount) || 0), 0);
                 const u = transactions.reduce((s, t) => s + (Number(t.amount) || 0), 0);
                 return { planned: p, used: u, balance: p - u };
             }, [budgets, transactions]);
 
-            // 상세 페이지용 데이터 계산
-            const derived = useMemo(() => {
+            const selectedData = useMemo(() => {
                 if (!selectedBudgetId) return null;
                 const b = budgets.find(x => x.id === selectedBudgetId);
                 if (!b) return null;
-                const related = transactions.filter(t => t.budgetId === selectedBudgetId);
-                const used = related.reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
-                return { ...b, used, balance: (Number(b.plannedAmount) || 0) - used, history: related.sort((a,b) => new Date(b.date) - new Date(a.date)) };
+                const rel = transactions.filter(t => t.budgetId === selectedBudgetId);
+                const used = rel.reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
+                return { ...b, used, balance: (Number(b.plannedAmount) || 0) - used, history: rel.sort((a,b) => new Date(b.date) - new Date(a.date)) };
             }, [selectedBudgetId, budgets, transactions]);
 
             const doAddB = (e) => {
                 e.preventDefault();
                 const next = [...budgets, { ...newBudget, id: Date.now().toString() }];
-                setBudgets(next); syncToCloud(next, transactions);
+                setBudgets(next); sync(next, transactions);
                 setNewBudget({ name: '', method: '', plannedAmount: 0, notes: '' }); setIsAddingBudget(false);
             };
 
             const doAddT = (e) => {
                 e.preventDefault();
                 const next = [...transactions, { ...newTransaction, id: Date.now().toString(), budgetId: selectedBudgetId }];
-                setTransactions(next); syncToCloud(budgets, next);
+                setTransactions(next); sync(budgets, next);
                 setNewTransaction({ date: new Date().toISOString().split('T')[0], description: '', location: '', notes: '', amount: 0 }); setIsAddingTransaction(false);
             };
 
@@ -128,7 +118,7 @@
                 let nb = budgets, nt = transactions;
                 if (type === 'budget') nb = budgets.map(x => x.id === id ? { ...x, ...editForm } : x);
                 else nt = transactions.map(x => x.id === id ? { ...x, ...editForm } : x);
-                setBudgets(nb); setTransactions(nt); syncToCloud(nb, nt); setEditingId(null);
+                setBudgets(nb); setTransactions(nt); sync(nb, nt); setEditingId(null);
             };
 
             if (loading) return <div className="flex items-center justify-center h-screen"><Icon name="loader" className="w-10 h-10 animate-spin text-amber-500" /></div>;
@@ -142,26 +132,23 @@
                         </div>
                         <div className="flex items-center gap-2">
                             {syncing && <Icon name="loader" className="w-3 h-3 animate-spin text-amber-500 mr-2" />}
-                            <span className={`text-[10px] font-black uppercase px-2 py-1 rounded-full ${BASE_URL.includes("URL을") ? 'bg-red-50 text-red-400' : 'bg-green-50 text-green-600'}`}>
-                                {BASE_URL.includes("URL을") ? '구글 시트 연결 필요' : 'Cloud Connected'}
-                            </span>
+                            <span className="text-[10px] font-black uppercase px-2 py-1 rounded-full bg-green-50 text-green-600">Cloud Connected</span>
                         </div>
                     </header>
 
                     {currentView === 'dashboard' ? (
                         <div className="space-y-6 fade-in text-center">
-                            {/* --- 가로형 예산 집행 현황 바 --- */}
                             <div className="bg-white p-5 rounded-[2rem] border border-gray-100 shadow-sm flex flex-col md:flex-row justify-between items-center gap-6 px-10">
                                 <div className="flex items-center gap-3">
                                     <div className="p-2 bg-amber-50 rounded-xl text-amber-500"><Icon name="bar-chart" className="w-6 h-6" /></div>
                                     <h2 className="text-xl font-black text-gray-700">예산 집행 현황</h2>
                                 </div>
                                 <div className="flex gap-8 items-center">
-                                    <div className="text-center"><p className="text-[10px] font-black text-gray-400 uppercase mb-1">총 편성액</p><p className="text-lg font-bold text-gray-800">{fmt(totalStatus.planned)}</p></div>
+                                    <div className="text-center"><p className="text-[10px] font-black text-gray-400 uppercase mb-1">총 편성액</p><p className="text-lg font-bold text-gray-800">{fmt(total.planned)}</p></div>
                                     <div className="h-8 w-px bg-gray-100"></div>
-                                    <div className="text-center"><p className="text-[10px] font-black text-gray-400 uppercase mb-1">총 사용액</p><p className="text-lg font-medium text-gray-900">{fmt(totalStatus.used)}</p></div>
+                                    <div className="text-center"><p className="text-[10px] font-black text-gray-400 uppercase mb-1">총 사용액</p><p className="text-lg font-medium text-gray-900">{fmt(total.used)}</p></div>
                                     <div className="h-8 w-px bg-gray-100"></div>
-                                    <div className="text-center"><p className="text-[10px] font-black text-red-400 uppercase mb-1">현재 잔액</p><p className="text-xl font-black text-red-600">{fmt(totalStatus.balance)}</p></div>
+                                    <div className="text-center"><p className="text-[10px] font-black text-red-400 uppercase mb-1">현재 잔액</p><p className="text-xl font-black text-red-600">{fmt(total.balance)}</p></div>
                                 </div>
                                 <button onClick={() => setIsAddingBudget(!isAddingBudget)} className="bg-amber-500 text-white px-6 py-2.5 rounded-2xl font-bold text-sm shadow-lg hover:bg-amber-600 active:scale-95 transition-all flex items-center gap-2">
                                     <Icon name="plus" /> 새 사업 추가
@@ -172,12 +159,12 @@
                                 <div className="bg-white p-6 rounded-3xl border border-amber-100 shadow-xl mb-6">
                                     <form onSubmit={doAddB} className="grid grid-cols-1 md:grid-cols-5 gap-4">
                                         {[ {id:'name', label:'예산명'}, {id:'method', label:'사용 방법'}, {id:'plannedAmount', label:'편성 금액'}, {id:'notes', label:'비고'} ].map(f => (
-                                            <div key={f.id} className="space-y-1">
-                                                <label className="text-[10px] font-black text-amber-700 uppercase block text-center">{f.label}</label>
+                                            <div key={f.id} className="space-y-1 text-center">
+                                                <label className="text-[10px] font-black text-amber-700 uppercase block">{f.label}</label>
                                                 <input required={f.id !== 'notes'} className="w-full px-3 py-2.5 rounded-xl border-2 border-gray-50 focus:border-amber-400 outline-none text-sm text-center font-bold" value={f.id === 'plannedAmount' ? toDisp(newBudget[f.id]) : newBudget[f.id]} onChange={e => setNewBudget({ ...newBudget, [f.id]: f.id === 'plannedAmount' ? toNum(e.target.value) : e.target.value })} />
                                             </div>
                                         ))}
-                                        <div className="flex items-end gap-2"><button type="submit" className="flex-1 bg-gray-900 text-white py-3 rounded-2xl font-bold active:scale-95">저장</button><button type="button" onClick={() => setIsAddingBudget(false)} className="px-3 py-3 text-gray-400 font-bold">취소</button></div>
+                                        <div className="flex items-end gap-2"><button type="submit" className="flex-1 bg-gray-900 text-white py-3 rounded-2xl font-bold active:scale-95 transition-transform">저장</button><button type="button" onClick={() => setIsAddingBudget(false)} className="px-3 py-3 text-gray-400 font-bold">취소</button></div>
                                     </form>
                                 </div>
                             )}
@@ -197,7 +184,7 @@
                                     </thead>
                                     <tbody className="divide-y divide-gray-50 text-sm">
                                         {budgets.map(b => {
-                                            const usedAmt = transactions.filter(t => t.budgetId === b.id).reduce((s,t) => s + (Number(t.amount) || 0), 0);
+                                            const u = transactions.filter(t => t.budgetId === b.id).reduce((s,t) => s + (Number(t.amount) || 0), 0);
                                             const isEdit = editingId === b.id;
                                             return (
                                                 <tr key={b.id} className="hover:bg-amber-50/10 transition-colors">
@@ -208,14 +195,14 @@
                                                         {isEdit ? <input className="w-full text-center border border-amber-300 rounded outline-none" value={editForm.method} onChange={e => setEditForm({...editForm, method: e.target.value})} /> : (b.method || '-')}
                                                     </td>
                                                     <td className="p-4 font-bold text-gray-900 text-center">{isEdit ? <input className="w-full text-center border border-amber-300 rounded font-bold outline-none" value={toDisp(editForm.plannedAmount)} onChange={e => setEditForm({...editForm, plannedAmount: toNum(e.target.value)})} /> : fmt(b.plannedAmount)}</td>
-                                                    <td className="p-4 text-gray-900 font-normal text-center">{fmt(usedAmt)}</td>
-                                                    <td className="p-4 font-bold text-red-600 text-[15px] text-center">{fmt((Number(b.plannedAmount) || 0) - usedAmt)}</td>
+                                                    <td className="p-4 text-gray-900 font-normal text-center">{fmt(u)}</td>
+                                                    <td className="p-4 font-bold text-red-600 text-[15px] text-center">{fmt((Number(b.plannedAmount) || 0) - u)}</td>
                                                     <td className="p-4 text-xs text-gray-800 font-bold truncate text-center">
                                                         {isEdit ? <input className="w-full text-center border border-amber-300 rounded outline-none" value={editForm.notes} onChange={e => setEditForm({...editForm, notes: e.target.value})} /> : (b.notes || '-')}
                                                     </td>
                                                     <td className="p-4 text-center"><div className="flex gap-2 justify-center">{isEdit ? <><button onClick={() => doSaveEdit('budget', b.id)} className="text-green-600 p-1"><Icon name="check" /></button><button onClick={() => setEditingId(null)} className="text-gray-400 p-1"><Icon name="x" /></button></> :
                                                         <><button onClick={() => { setEditingId(b.id); setEditForm({...b}); }} className="p-1.5 text-gray-300 hover:text-amber-500 transition-colors"><Icon name="edit-2" /></button>
-                                                          <button onClick={() => { if(confirm('이 사업을 삭제하시겠습니까? 관련 내역도 모두 사라집니다.')) { const next = budgets.filter(x => x.id !== b.id); setBudgets(next); syncToCloud(next, transactions); }}} className="p-1.5 text-gray-300 hover:text-red-500"><Icon name="trash-2" /></button></>}</div></td>
+                                                          <button onClick={() => { if(confirm('삭제할까요?')) { const next = budgets.filter(x => x.id !== b.id); setBudgets(next); sync(next, transactions); }}} className="p-1.5 text-gray-300 hover:text-red-500"><Icon name="trash-2" /></button></>}</div></td>
                                                 </tr>
                                             );
                                         })}
@@ -224,18 +211,18 @@
                             </div>
                         </div>
                     ) : (
-                        /* DETAIL VIEW (지출 내역) */
+                        /* DETAIL VIEW */
                         <div className="space-y-4 fade-in text-center">
                             <div className="flex px-2"><button onClick={() => { setCurrentView('dashboard'); setEditingId(null); setSelectedBudgetId(null); }} className="flex items-center gap-2 text-gray-500 font-bold hover:text-gray-900 transition-colors text-sm"><Icon name="arrow-left" className="w-5 h-5" /> 대시보드로 돌아가기</button></div>
                             <div className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-gray-100 flex flex-col md:flex-row justify-between items-center gap-6">
-                                <div className="text-center md:text-left"><span className="text-[10px] font-black text-amber-500 bg-amber-50 px-2 py-1 rounded-full uppercase mb-2 inline-block">{derived?.method || '-'}</span><h2 className="text-4xl font-black text-gray-900">{derived?.name}</h2></div>
+                                <div className="text-center md:text-left"><span className="text-[10px] font-black text-amber-500 bg-amber-50 px-2 py-1 rounded-full uppercase mb-2 inline-block">{selectedData?.method || '-'}</span><h2 className="text-4xl font-black text-gray-900 text-center">{selectedData?.name}</h2></div>
                                 <div className="flex gap-4">
-                                    <div className="text-center bg-gray-50/50 px-8 py-4 rounded-[1.5rem] border border-gray-100 text-center"><p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 text-center">사용액</p><p className="text-2xl font-normal text-gray-900">{fmt(derived?.used)}</p></div>
-                                    <div className="text-center bg-red-50/10 px-8 py-4 rounded-[1.5rem] border-2 border-red-50 text-center"><p className="text-[10px] font-black text-red-400 uppercase tracking-widest mb-1 text-center">현재 잔액</p><p className="text-3xl font-black text-red-600">{fmt(derived?.balance)}</p></div>
+                                    <div className="text-center bg-gray-50/50 px-8 py-4 rounded-[1.5rem] border border-gray-100 text-center"><p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">사용액</p><p className="text-2xl font-normal text-gray-900">{fmt(selectedData?.used)}</p></div>
+                                    <div className="text-center bg-red-50/10 px-8 py-4 rounded-[1.5rem] border-2 border-red-50 text-center"><p className="text-[10px] font-black text-red-400 uppercase tracking-widest mb-1 text-center">현재 잔액</p><p className="text-3xl font-black text-red-600">{fmt(selectedData?.balance)}</p></div>
                                 </div>
                             </div>
                             <div className="flex justify-between items-center px-4 mt-2">
-                                <h3 className="font-black flex items-center gap-2 text-gray-700 text-lg text-left">지출 내역 관리</h3>
+                                <h3 className="font-black flex items-center gap-2 text-gray-700 text-lg text-left">지출 내역</h3>
                                 <button onClick={() => setIsAddingTransaction(!isAddingTransaction)} className={`px-5 py-2.5 rounded-xl font-bold text-sm shadow-lg transition-all flex items-center gap-2 active:scale-95 ${isAddingTransaction ? 'bg-gray-800 text-white shadow-gray-200' : 'bg-amber-500 text-white shadow-amber-100 hover:bg-amber-600'}`}>
                                     <Icon name={isAddingTransaction ? 'x' : 'plus'} /> {isAddingTransaction ? '닫기' : '내역 추가'}
                                 </button>
@@ -243,32 +230,32 @@
                             {isAddingTransaction && (
                                 <div className="bg-amber-50 p-6 rounded-[2rem] border border-amber-100 shadow-xl mb-4 animate-fade-in">
                                     <form onSubmit={doAddT} className="grid grid-cols-1 md:grid-cols-12 gap-4 items-end text-center">
-                                        <div className="md:col-span-2 space-y-1"><label className="text-[10px] font-black text-amber-700 block text-center">일자</label><input type="date" required className="w-full p-2.5 rounded-xl border border-gray-100 bg-white outline-none text-sm text-center font-bold" value={newTransaction.date} onChange={e => setNewTransaction({...newTransaction, date: e.target.value})} /></div>
-                                        <div className="md:col-span-2 space-y-1"><label className="text-[10px] font-black text-amber-700 block text-center">내역</label><input required className="w-full p-2.5 rounded-xl border border-gray-100 bg-white outline-none text-sm text-center font-bold" value={newTransaction.description} onChange={e => setNewTransaction({...newTransaction, description: e.target.value})} /></div>
-                                        <div className="md:col-span-2 space-y-1"><label className="text-[10px] font-black text-amber-700 block text-center">사용처</label><input className="w-full p-2.5 rounded-xl border border-gray-100 bg-white outline-none text-sm text-center font-bold" value={newTransaction.location} onChange={e => setNewTransaction({...newTransaction, location: e.target.value})} /></div>
-                                        <div className="md:col-span-2 space-y-1 font-bold text-red-600 text-center"><label className="text-[10px] font-black text-red-500 block text-center">금액 (원)</label><input required className="w-full p-2.5 rounded-xl border border-gray-100 bg-white outline-none text-sm text-center font-bold" value={toDisp(newTransaction.amount)} onChange={e => setNewTransaction({...newTransaction, amount: toNum(e.target.value)})} /></div>
+                                        <div className="md:col-span-2 space-y-1 text-center"><label className="text-[10px] font-black text-amber-700 block text-center">일자</label><input type="date" required className="w-full p-2.5 rounded-xl border border-gray-100 bg-white outline-none text-sm text-center font-bold" value={newTransaction.date} onChange={e => setNewTransaction({...newTransaction, date: e.target.value})} /></div>
+                                        <div className="md:col-span-2 space-y-1 text-center"><label className="text-[10px] font-black text-amber-700 block text-center">내역</label><input required className="w-full p-2.5 rounded-xl border border-gray-100 bg-white outline-none text-sm text-center font-bold" value={newTransaction.description} onChange={e => setNewTransaction({...newTransaction, description: e.target.value})} /></div>
+                                        <div className="md:col-span-2 space-y-1 text-center"><label className="text-[10px] font-black text-amber-700 block text-center">사용처</label><input className="w-full p-2.5 rounded-xl border border-gray-100 bg-white outline-none text-sm text-center font-bold" value={newTransaction.location} onChange={e => setNewTransaction({...newTransaction, location: e.target.value})} /></div>
+                                        <div className="md:col-span-2 space-y-1 font-bold text-red-600 text-center text-center"><label className="text-[10px] font-black text-red-500 block">금액 (원)</label><input required className="w-full p-2.5 rounded-xl border border-gray-100 bg-white outline-none text-sm text-center font-bold" value={toDisp(newTransaction.amount)} onChange={e => setNewTransaction({...newTransaction, amount: toNum(e.target.value)})} /></div>
                                         <div className="md:col-span-2 space-y-1 text-center"><label className="text-[10px] font-black text-amber-700 block text-center">비고</label><input className="w-full p-2.5 rounded-xl border border-gray-100 bg-white outline-none text-sm text-center font-bold" value={newTransaction.notes} onChange={e => setNewTransaction({...newTransaction, notes: e.target.value})} /></div>
                                         <div className="md:col-span-2 flex gap-2"><button type="submit" className="flex-1 bg-amber-600 text-white py-3 rounded-xl font-bold text-xs shadow-md active:scale-95 transition-all">기록</button><button type="button" onClick={() => setIsAddingTransaction(false)} className="px-3 text-amber-700 font-bold text-xs">취소</button></div>
                                     </form>
                                 </div>
                             )}
-                            <div className="bg-white rounded-[2rem] shadow-sm border border-gray-100 overflow-hidden mt-3">
+                            <div className="bg-white rounded-[2rem] shadow-sm border border-gray-100 overflow-hidden mt-3 text-center">
                                 <table className="w-full border-collapse table-fixed text-sm text-center">
                                     <thead className="bg-gray-50/80 border-b border-gray-100 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">
-                                        <tr className="text-center"><th className="p-4 w-36 text-center">날짜</th><th className="p-4 w-auto text-center">사용 내역</th><th className="p-4 w-36 text-center">사용처</th><th className="p-4 w-32 text-center">금액</th><th className="p-4 w-48 text-center">비고</th><th className="p-4 w-24 text-center"></th></tr>
+                                        <tr className="text-center"><th className="p-4 w-36">날짜</th><th className="p-4 w-auto">사용 내역</th><th className="p-4 w-36">사용처</th><th className="p-4 w-32">금액</th><th className="p-4 w-48">비고</th><th className="p-4 w-24"></th></tr>
                                     </thead>
                                     <tbody className="divide-y divide-gray-50 text-center">
-                                        {derived?.history.map(t => {
+                                        {selectedData?.history.map(t => {
                                             const isEditTx = editingId === t.id;
                                             return (
                                                 <tr key={t.id} className="hover:bg-gray-50 transition-all text-center">
-                                                    <td className="p-4 font-mono text-gray-800 text-xs text-center">{isEditTx ? <input type="date" className="w-full text-center border-2 border-amber-300 rounded py-0.5 outline-none font-bold" value={editForm.date} onChange={e => setEditForm({...editForm, date: e.target.value})} /> : t.date}</td>
-                                                    <td className="p-4 font-bold text-gray-900 text-center">{isEditTx ? <input className="w-full text-center border border-amber-300 rounded font-bold outline-none" value={editForm.description} onChange={e => setEditForm({...editForm, description: e.target.value})} /> : t.description}</td>
-                                                    <td className="p-4 text-gray-900 font-bold text-center">{isEditTx ? <input className="w-full text-center border border-amber-300 rounded outline-none" value={editForm.location} onChange={e => setEditForm({...editForm, location: e.target.value})} /> : (t.location || '-')}</td>
+                                                    <td className="p-4 font-mono text-gray-700 text-xs text-center">{isEditTx ? <input type="date" className="w-full text-center border-2 border-amber-300 rounded py-0.5 outline-none font-bold" value={editForm.date} onChange={e => setEditForm({...editForm, date: e.target.value})} /> : t.date}</td>
+                                                    <td className="p-4 font-bold text-gray-800 text-center">{isEditTx ? <input className="w-full text-center border border-amber-300 rounded font-bold outline-none" value={editForm.description} onChange={e => setEditForm({...editForm, description: e.target.value})} /> : t.description}</td>
+                                                    <td className="p-4 text-gray-800 font-bold text-center">{isEditTx ? <input className="w-full text-center border border-amber-300 rounded outline-none" value={editForm.location} onChange={e => setEditForm({...editForm, location: e.target.value})} /> : (t.location || '-')}</td>
                                                     <td className="p-4 font-black text-center">{isEditTx ? <div className="flex gap-1 justify-center items-center mx-auto"><input className="w-full text-center border border-amber-300 rounded font-black outline-none" value={toDisp(editForm.amount)} onChange={e => setEditForm({...editForm, amount: toNum(e.target.value)})} /><span className="text-[9px]">원</span></div> : fmt(t.amount)}</td>
                                                     <td className="p-4 text-xs text-gray-900 truncate font-bold text-center">{isEditTx ? <input className="w-full text-center border border-amber-300 rounded outline-none font-normal" value={editForm.notes} onChange={e => setEditForm({...editForm, notes: e.target.value})} /> : (t.notes || '-')}</td>
                                                     <td className="p-4 text-center"><div className="flex gap-2 justify-center">{isEditTx ? <><button onClick={() => doSaveEdit('transaction', t.id)} className="text-green-600 p-1"><Icon name="check" /></button><button onClick={() => setEditingId(null)} className="text-gray-400 p-1"><Icon name="x" /></button></> :
-                                                        <><button onClick={() => { setEditingId(t.id); setEditForm({...t}); }} className="p-1.5 text-gray-300 hover:text-amber-500 transition-colors"><Icon name="edit-2" /></button><button onClick={() => { if(confirm('삭제하시겠습니까?')) { const next = transactions.filter(x => x.id !== t.id); setTransactions(next); syncToCloud(budgets, next); }}} className="p-1.5 text-gray-300 hover:text-red-500"><Icon name="trash-2" /></button></>}</div></td>
+                                                        <><button onClick={() => { setEditingId(t.id); setEditForm({...t}); }} className="p-1.5 text-gray-300 hover:text-amber-500 transition-colors"><Icon name="edit-2" /></button><button onClick={() => { if(confirm('삭제할까요?')) { const next = transactions.filter(x => x.id !== t.id); setTransactions(next); sync(budgets, next); }}} className="p-1.5 text-gray-300 hover:text-red-500"><Icon name="trash-2" /></button></>}</div></td>
                                                 </tr>
                                             );
                                         })}

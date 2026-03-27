@@ -22,7 +22,7 @@
     <script type="text/babel">
         const { useState, useEffect, useMemo, useRef } = React;
 
-        // --- ⚠️ 필수 설정 : 본인의 GAS URL ⚠️ ---
+        // --- ⚠️ 필수 설정 : 본인의 최신 GAS URL ⚠️ ---
         const BASE_URL = "https://script.google.com/macros/s/AKfycbzoCgmF_cfpNOaImXQ7yY0UPOZ5eDuH1whp7NKTdEAvjPWGO6y5GzvafqySyy3Oul1l/exec"; 
         const GAS_URL = BASE_URL + (BASE_URL.includes("?") ? "&" : "?") + "sheet=교사용_예산";
         const SOURCE_SHEET_URL = "https://docs.google.com/spreadsheets/d/1NZTWMtsmhCxkjZ1rEsonWUpNZaG4HOXstFBLyjY7UrY/edit?gid=0#gid=0";
@@ -54,7 +54,7 @@
             const [transactions, setTransactions] = useState([]);
             const [loading, setLoading] = useState(true);
             const [syncing, setSyncing] = useState(false);
-            const [isInitialLoaded, setIsInitialLoaded] = useState(false); // 덮어쓰기 방지용 락(Lock)
+            const [isLoaded, setIsLoaded] = useState(false); // 데이터 로드 성공 여부 락(Lock)
             
             const [currentView, setCurrentView] = useState('dashboard');
             const [selectedBudgetId, setSelectedBudgetId] = useState(null);
@@ -73,13 +73,17 @@
                 try {
                     const response = await fetch(GAS_URL);
                     const data = await response.json();
-                    if (data) {
+                    if (data && (data.budgets || data.transactions)) {
                         setBudgets(data.budgets || []);
                         setTransactions(data.transactions || []);
-                        setIsInitialLoaded(true); // 데이터를 성공적으로 가져왔을 때만 저장 권한 부여
+                        setIsLoaded(true); // 이제 저장 가능 상태가 됨
+                    } else if (data && Object.keys(data).length === 0) {
+                        // 시트가 아예 비어있는 경우 (초기 상태)
+                        setIsLoaded(true);
                     }
                 } catch (err) {
                     console.error("Load Error:", err);
+                    // 에러 발생 시 isLoaded를 false로 유지하여 자동 저장을 방지함
                 } finally {
                     setLoading(false);
                 }
@@ -87,20 +91,25 @@
 
             useEffect(() => { loadData(); }, []);
 
-            // 2. 동기화 함수 (안전장치 추가)
+            // 2. 동기화 함수 (안전장치 강화)
             const sync = async (b, t) => {
-                if (!isInitialLoaded) {
-                    console.warn("데이터가 아직 로드되지 않아 저장을 방지합니다.");
+                // 데이터 로드가 완료되지 않았거나 데이터가 비정상적으로 비어있으면 저장 차단
+                if (!isLoaded) {
+                    console.warn("데이터 로드 전 저장이 감지되어 차단되었습니다.");
                     return;
                 }
+                
                 setSyncing(true);
                 try {
+                    // GAS Web App 규격에 맞춘 전송 (no-cors)
                     await fetch(GAS_URL, {
                         method: 'POST',
                         mode: 'no-cors',
+                        cache: 'no-cache',
                         body: JSON.stringify({ budgets: b, transactions: t })
                     });
-                    setTimeout(() => setSyncing(false), 1000);
+                    // 서버 반영을 위한 시각적 대기
+                    setTimeout(() => setSyncing(false), 1200);
                 } catch (e) {
                     console.error("Sync Error", e);
                     setSyncing(false);
@@ -147,7 +156,24 @@
                 setBudgets(nb); setTransactions(nt); sync(nb, nt); setEditingId(null);
             };
 
-            if (loading) return <div className="flex flex-col items-center justify-center h-screen gap-4"><Icon name="loader" className="w-10 h-10 animate-spin text-amber-500" /><p className="text-gray-400 font-bold animate-pulse">데이터를 안전하게 불러오는 중...</p></div>;
+            const doDelete = (type, id) => {
+                if(!confirm('정말로 삭제하시겠습니까?')) return;
+                let nb = budgets, nt = transactions;
+                if (type === 'budget') {
+                    nb = budgets.filter(x => x.id !== id);
+                    nt = transactions.filter(x => x.budgetId !== id);
+                } else {
+                    nt = transactions.filter(x => x.id !== id);
+                }
+                setBudgets(nb); setTransactions(nt); sync(nb, nt);
+            };
+
+            if (loading && !isLoaded) return (
+                <div className="flex flex-col items-center justify-center h-screen gap-4">
+                    <Icon name="loader" className="w-10 h-10 animate-spin text-amber-500" />
+                    <p className="text-gray-500 font-bold animate-pulse text-sm">클라우드 데이터를 불러오는 중...</p>
+                </div>
+            );
 
             return (
                 <div className="max-w-7xl mx-auto px-4 pb-20">
@@ -157,16 +183,16 @@
                             <h1 className="text-2xl font-black tracking-tighter text-gray-800">학교 예산 관리 시스템</h1>
                         </div>
                         <div className="flex items-center gap-2">
-                            {syncing && <div className="flex items-center gap-1.5 text-amber-600 mr-2"><Icon name="loader" className="w-3 h-3 animate-spin" /><span className="text-[10px] font-bold">저장 중...</span></div>}
+                            {syncing && <div className="flex items-center gap-1.5 text-amber-600 mr-2"><Icon name="loader" className="w-3 h-3 animate-spin" /><span className="text-[10px] font-bold">Cloud Saving...</span></div>}
                             
-                            <button onClick={loadData} className="p-2 text-gray-400 hover:text-amber-500 transition-colors" title="강제 새로고침"><Icon name="refresh" className="w-4 h-4" /></button>
+                            <button onClick={loadData} className="p-2 text-gray-400 hover:text-amber-500 transition-colors" title="데이터 새로고침"><Icon name="refresh" className="w-4 h-4" /></button>
                             
-                            <a href={SOURCE_SHEET_URL} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-gray-100 text-gray-600 hover:bg-amber-100 hover:text-amber-700 transition-all text-[10px] font-bold uppercase tracking-wider mr-1 border border-gray-200">
+                            <a href={SOURCE_SHEET_URL} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-gray-100 text-gray-600 hover:bg-amber-100 hover:text-amber-700 transition-all text-[10px] font-bold uppercase tracking-wider mr-1 border border-gray-200 shadow-sm">
                                 <Icon name="link" className="w-3 h-3" /> Data Source
                             </a>
 
-                            <span className={`text-[10px] font-black uppercase px-3 py-1.5 rounded-full shadow-sm border ${!isInitialLoaded ? 'bg-red-50 text-red-400 border-red-100' : 'bg-green-50 text-green-600 border-green-100'}`}>
-                                {!isInitialLoaded ? '연결 오류' : 'Cloud Connected'}
+                            <span className={`text-[10px] font-black uppercase px-3 py-1.5 rounded-full shadow-sm border ${!isLoaded ? 'bg-red-50 text-red-400 border-red-100' : 'bg-green-50 text-green-600 border-green-100'}`}>
+                                {!isLoaded ? 'Sync Locked' : 'Cloud Connected'}
                             </span>
                         </div>
                     </header>
@@ -218,7 +244,7 @@
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-gray-50 text-sm">
-                                        {budgets.map(b => {
+                                        {budgets.length === 0 ? <tr><td colSpan="7" className="p-20 text-gray-300 font-bold">등록된 사업이 없습니다.</td></tr> : budgets.map(b => {
                                             const u = transactions.filter(t => t.budgetId === b.id).reduce((s,t) => s + (Number(t.amount) || 0), 0);
                                             const isEdit = editingId === b.id;
                                             return (
@@ -230,10 +256,10 @@
                                                     <td className="p-4 font-bold text-gray-900 text-center">{isEdit ? <input className="w-full text-center border border-amber-300 rounded font-bold outline-none" value={toDisp(editForm.plannedAmount)} onChange={e => setEditForm({...editForm, plannedAmount: toNum(e.target.value)})} /> : fmt(b.plannedAmount)}</td>
                                                     <td className="p-4 text-gray-900 font-normal text-center">{fmt(u)}</td>
                                                     <td className="p-4 font-bold text-red-600 text-[15px] text-center">{fmt((Number(b.plannedAmount) || 0) - u)}</td>
-                                                    <td className="p-4 text-xs text-gray-800 font-bold truncate text-center">{isEdit ? <input className="w-full text-center border border-amber-300 rounded outline-none" value={editForm.notes} onChange={e => setEditForm({...editForm, notes: e.target.value})} /> : (b.notes || '-')}</td>
+                                                    <td className="p-4 text-xs text-gray-900 font-bold truncate text-center">{isEdit ? <input className="w-full text-center border border-amber-300 rounded outline-none" value={editForm.notes} onChange={e => setEditForm({...editForm, notes: e.target.value})} /> : (b.notes || '-')}</td>
                                                     <td className="p-4 text-center"><div className="flex gap-2 justify-center">{isEdit ? <><button onClick={() => doSaveEdit('budget', b.id)} className="text-green-600 p-1"><Icon name="check" /></button><button onClick={() => setEditingId(null)} className="text-gray-400 p-1"><Icon name="x" /></button></> :
                                                         <><button onClick={() => { setEditingId(b.id); setEditForm({...b}); }} className="p-1.5 text-gray-300 hover:text-amber-500 transition-colors"><Icon name="edit-2" /></button>
-                                                          <button onClick={() => { if(confirm('삭제할까요?')) { const next = budgets.filter(x => x.id !== b.id); setBudgets(next); sync(next, transactions); }}} className="p-1.5 text-gray-300 hover:text-red-500"><Icon name="trash-2" /></button></>}</div></td>
+                                                          <button onClick={() => doDelete('budget', b.id)} className="p-1.5 text-gray-300 hover:text-red-500"><Icon name="trash-2" /></button></>}</div></td>
                                                 </tr>
                                             );
                                         })}
@@ -246,9 +272,9 @@
                         <div className="space-y-4 fade-in text-center">
                             <div className="flex px-2"><button onClick={() => { setCurrentView('dashboard'); setEditingId(null); setSelectedBudgetId(null); }} className="flex items-center gap-2 text-gray-500 font-bold hover:text-gray-900 transition-colors text-sm"><Icon name="arrow-left" className="w-5 h-5" /> 대시보드로 돌아가기</button></div>
                             <div className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-gray-100 flex flex-col md:flex-row justify-between items-center gap-6">
-                                <div className="text-center md:text-left"><span className="text-[10px] font-black text-amber-500 bg-amber-50 px-2 py-1 rounded-full uppercase mb-2 inline-block">{selectedData?.method || '-'}</span><h2 className="text-4xl font-black text-gray-900">{selectedData?.name}</h2></div>
+                                <div className="text-center md:text-left"><span className="text-[10px] font-black text-amber-500 bg-amber-50 px-2 py-1 rounded-full uppercase mb-2 inline-block">{selectedData?.method || '-'}</span><h2 className="text-4xl font-black text-gray-900 text-center">{selectedData?.name}</h2></div>
                                 <div className="flex gap-4">
-                                    <div className="text-center bg-gray-50/50 px-8 py-4 rounded-[1.5rem] border border-gray-100 text-center"><p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 text-center">사용액</p><p className="text-2xl font-normal text-gray-800">{fmt(selectedData?.used)}</p></div>
+                                    <div className="text-center bg-gray-50/50 px-8 py-4 rounded-[1.5rem] border border-gray-100 text-center"><p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 text-center">사용액</p><p className="text-2xl font-normal text-gray-900">{fmt(selectedData?.used)}</p></div>
                                     <div className="text-center bg-red-50/10 px-8 py-4 rounded-[1.5rem] border-2 border-red-50 text-center"><p className="text-[10px] font-black text-red-400 uppercase tracking-widest mb-1 text-center">현재 잔액</p><p className="text-3xl font-black text-red-600">{fmt(selectedData?.balance)}</p></div>
                                 </div>
                             </div>
@@ -264,7 +290,7 @@
                                         <div className="md:col-span-2 space-y-1 text-center"><label className="text-[10px] font-black text-amber-700 block text-center">일자</label><input type="date" required className="w-full p-2.5 rounded-xl border border-gray-100 bg-white outline-none text-sm text-center font-bold" value={newTransaction.date} onChange={e => setNewTransaction({...newTransaction, date: e.target.value})} /></div>
                                         <div className="md:col-span-2 space-y-1 text-center"><label className="text-[10px] font-black text-amber-700 block text-center">내역</label><input required className="w-full p-2.5 rounded-xl border border-gray-100 bg-white outline-none text-sm text-center font-bold" value={newTransaction.description} onChange={e => setNewTransaction({...newTransaction, description: e.target.value})} /></div>
                                         <div className="md:col-span-2 space-y-1 text-center"><label className="text-[10px] font-black text-amber-700 block text-center">사용처</label><input className="w-full p-2.5 rounded-xl border border-gray-100 bg-white outline-none text-sm text-center font-bold" value={newTransaction.location} onChange={e => setNewTransaction({...newTransaction, location: e.target.value})} /></div>
-                                        <div className="md:col-span-2 space-y-1 font-bold text-red-600 text-center"><label className="text-[10px] font-black text-red-500 block text-center text-center">금액 (원)</label><input required className="w-full p-2.5 rounded-xl border border-gray-100 bg-white outline-none text-sm text-center font-bold" value={toDisp(newTransaction.amount)} onChange={e => setNewTransaction({...newTransaction, amount: toNum(e.target.value)})} /></div>
+                                        <div className="md:col-span-2 space-y-1 font-bold text-red-600 text-center text-center"><label className="text-[10px] font-black text-red-500 block">금액 (원)</label><input required className="w-full p-2.5 rounded-xl border border-gray-100 bg-white outline-none text-sm text-center font-bold" value={toDisp(newTransaction.amount)} onChange={e => setNewTransaction({...newTransaction, amount: toNum(e.target.value)})} /></div>
                                         <div className="md:col-span-2 space-y-1 text-center"><label className="text-[10px] font-black text-amber-700 block text-center">비고</label><input className="w-full p-2.5 rounded-xl border border-gray-100 bg-white outline-none text-sm text-center font-bold" value={newTransaction.notes} onChange={e => setNewTransaction({...newTransaction, notes: e.target.value})} /></div>
                                         <div className="md:col-span-2 flex gap-2"><button type="submit" className="flex-1 bg-amber-600 text-white py-3 rounded-xl font-bold text-xs shadow-md active:scale-95 transition-all">기록</button><button type="button" onClick={() => setIsAddingTransaction(false)} className="px-3 text-amber-700 font-bold text-xs">취소</button></div>
                                     </form>
@@ -281,12 +307,12 @@
                                             return (
                                                 <tr key={t.id} className="hover:bg-gray-50 transition-all text-center">
                                                     <td className="p-4 font-mono text-gray-700 text-xs text-center">{isEditTx ? <input type="date" className="w-full text-center border-2 border-amber-300 rounded py-0.5 outline-none font-bold" value={editForm.date} onChange={e => setEditForm({...editForm, date: e.target.value})} /> : t.date}</td>
-                                                    <td className="p-4 font-bold text-gray-800 text-center">{isEditTx ? <input className="w-full text-center border border-amber-300 rounded font-bold outline-none" value={editForm.description} onChange={e => setEditForm({...editForm, description: e.target.value})} /> : t.description}</td>
-                                                    <td className="p-4 text-gray-800 font-bold text-center">{isEditTx ? <input className="w-full text-center border border-amber-300 rounded outline-none" value={editForm.location} onChange={e => setEditForm({...editForm, location: e.target.value})} /> : (t.location || '-')}</td>
+                                                    <td className="p-4 font-bold text-gray-900 text-center">{isEditTx ? <input className="w-full text-center border border-amber-300 rounded font-bold outline-none" value={editForm.description} onChange={e => setEditForm({...editForm, description: e.target.value})} /> : t.description}</td>
+                                                    <td className="p-4 text-gray-900 font-bold text-center">{isEditTx ? <input className="w-full text-center border border-amber-300 rounded outline-none" value={editForm.location} onChange={e => setEditForm({...editForm, location: e.target.value})} /> : (t.location || '-')}</td>
                                                     <td className="p-4 font-black text-center">{isEditTx ? <div className="flex gap-1 justify-center items-center mx-auto"><input className="w-full text-center border border-amber-300 rounded font-black outline-none" value={toDisp(editForm.amount)} onChange={e => setEditForm({...editForm, amount: toNum(e.target.value)})} /><span className="text-[9px]">원</span></div> : fmt(t.amount)}</td>
-                                                    <td className="p-4 text-xs text-gray-800 truncate font-bold text-center">{isEditTx ? <input className="w-full text-center border border-amber-300 rounded outline-none font-normal" value={editForm.notes} onChange={e => setEditForm({...editForm, notes: e.target.value})} /> : (t.notes || '-')}</td>
+                                                    <td className="p-4 text-xs text-gray-900 truncate font-bold text-center">{isEditTx ? <input className="w-full text-center border border-amber-300 rounded outline-none font-normal" value={editForm.notes} onChange={e => setEditForm({...editForm, notes: e.target.value})} /> : (t.notes || '-')}</td>
                                                     <td className="p-4 text-center"><div className="flex gap-2 justify-center">{isEditTx ? <><button onClick={() => doSaveEdit('transaction', t.id)} className="text-green-600 p-1"><Icon name="check" /></button><button onClick={() => setEditingId(null)} className="text-gray-400 p-1"><Icon name="x" /></button></> :
-                                                        <><button onClick={() => { setEditingId(t.id); setEditForm({...t}); }} className="p-1.5 text-gray-300 hover:text-amber-500 transition-colors"><Icon name="edit-2" /></button><button onClick={() => { if(confirm('삭제할까요?')) { const next = transactions.filter(x => x.id !== t.id); setTransactions(next); sync(budgets, next); }}} className="p-1.5 text-gray-300 hover:text-red-500"><Icon name="trash-2" /></button></>}</div></td>
+                                                        <><button onClick={() => { setEditingId(t.id); setEditForm({...t}); }} className="p-1.5 text-gray-300 hover:text-amber-500 transition-colors"><Icon name="edit-2" /></button><button onClick={() => doDelete('transaction', t.id)} className="p-1.5 text-gray-300 hover:text-red-500"><Icon name="trash-2" /></button></>}</div></td>
                                                 </tr>
                                             );
                                         })}

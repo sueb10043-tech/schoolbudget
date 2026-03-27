@@ -23,7 +23,7 @@
     <script type="text/babel">
         const { useState, useEffect, useMemo } = React;
 
-        // --- ⚠️ 주요 설정 : 본인의 GAS URL을 아래 큰따옴표 안에 넣으세요 ⚠️ ---
+        // --- ⚠️ 주요 설정 : 본인의 최신 GAS URL을 아래 큰따옴표 안에 넣으세요 ⚠️ ---
         const BASE_URL = "https://script.google.com/macros/s/AKfycbzoCgmF_cfpNOaImXQ7yY0UPOZ5eDuH1whp7NKTdEAvjPWGO6y5GzvafqySyy3Oul1l/exec"; 
         
         // "교사용_예산" 시트와 강제로 연결하는 최종 주소
@@ -67,21 +67,42 @@
             const [newBudget, setNewBudget] = useState({ name: '', method: '', plannedAmount: 0, notes: '' });
             const [newTransaction, setNewTransaction] = useState({ date: new Date().toISOString().split('T')[0], description: '', location: '', notes: '', amount: 0 });
 
-            // 데이터 로드
+            // 데이터 로드 (시작 시 호출)
             useEffect(() => {
                 if (!BASE_URL || BASE_URL.includes("URL을")) { setLoading(false); return; }
-                fetch(GAS_URL).then(r => r.json()).then(data => {
-                    setBudgets(data.budgets || []); setTransactions(data.transactions || []); setLoading(false);
-                }).catch(() => setLoading(false));
+                fetch(GAS_URL)
+                    .then(r => r.json())
+                    .then(data => {
+                        if(data) {
+                            setBudgets(data.budgets || []);
+                            setTransactions(data.transactions || []);
+                        }
+                        setLoading(false);
+                    })
+                    .catch((err) => {
+                        console.error("Load Error:", err);
+                        setLoading(false);
+                    });
             }, []);
 
-            // 데이터 저장
+            // 클라우드 저장 로직 (안정성 강화)
             const sync = async (b, t) => {
                 if (!BASE_URL || BASE_URL.includes("URL을")) return;
                 setSyncing(true);
-                try { await fetch(GAS_URL, { method: 'POST', body: JSON.stringify({ budgets: b, transactions: t }) }); } 
-                catch (e) { console.error(e); }
-                setSyncing(false);
+                try {
+                    // GAS의 특성상 no-cors 모드로 데이터를 보냅니다.
+                    await fetch(GAS_URL, {
+                        method: 'POST',
+                        mode: 'no-cors', 
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ budgets: b, transactions: t })
+                    });
+                    // 저장이 완료된 후 잠시 대기 (서버 반영 시간)
+                    setTimeout(() => setSyncing(false), 1000);
+                } catch (e) {
+                    console.error("Sync Error:", e);
+                    setSyncing(false);
+                }
             };
 
             const fmt = (n) => new Intl.NumberFormat('ko-KR').format(n || 0) + '원';
@@ -106,15 +127,19 @@
             const doAddB = (e) => {
                 e.preventDefault();
                 const next = [...budgets, { ...newBudget, id: Date.now().toString() }];
-                setBudgets(next); sync(next, transactions);
-                setNewBudget({ name: '', method: '', plannedAmount: 0, notes: '' }); setIsAddingBudget(false);
+                setBudgets(next);
+                sync(next, transactions);
+                setNewBudget({ name: '', method: '', plannedAmount: 0, notes: '' });
+                setIsAddingBudget(false);
             };
 
             const doAddT = (e) => {
                 e.preventDefault();
                 const next = [...transactions, { ...newTransaction, id: Date.now().toString(), budgetId: selectedBudgetId }];
-                setTransactions(next); sync(budgets, next);
-                setNewTransaction({ date: new Date().toISOString().split('T')[0], description: '', location: '', notes: '', amount: 0 }); setIsAddingTransaction(false);
+                setTransactions(next);
+                sync(budgets, next);
+                setNewTransaction({ date: new Date().toISOString().split('T')[0], description: '', location: '', notes: '', amount: 0 });
+                setIsAddingTransaction(false);
             };
 
             const doSaveEdit = (type, id) => {
@@ -134,18 +159,10 @@
                             <h1 className="text-2xl font-black tracking-tighter text-gray-800">학교 예산 관리 시스템</h1>
                         </div>
                         <div className="flex items-center gap-2">
-                            {syncing && <Icon name="loader" className="w-3 h-3 animate-spin text-amber-500 mr-2" />}
+                            {syncing && <div className="flex items-center gap-1.5 text-amber-600 animate-pulse mr-2"><Icon name="loader" className="w-3 h-3 animate-spin" /><span className="text-[10px] font-bold">저장 중...</span></div>}
                             
-                            {/* 소스 시트 이동 버튼 추가 */}
-                            <a 
-                                href={SOURCE_SHEET_URL} 
-                                target="_blank" 
-                                rel="noopener noreferrer"
-                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-gray-100 text-gray-600 hover:bg-amber-100 hover:text-amber-700 transition-all text-[10px] font-bold uppercase tracking-wider mr-1 shadow-sm border border-gray-200"
-                                title="원본 데이터 시트 열기"
-                            >
-                                <Icon name="link" className="w-3 h-3" />
-                                Data Source
+                            <a href={SOURCE_SHEET_URL} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-gray-100 text-gray-600 hover:bg-amber-100 hover:text-amber-700 transition-all text-[10px] font-bold uppercase tracking-wider mr-1 shadow-sm border border-gray-200">
+                                <Icon name="link" className="w-3 h-3" /> Data Source
                             </a>
 
                             <span className={`text-[10px] font-black uppercase px-3 py-1.5 rounded-full shadow-sm border ${BASE_URL.includes("URL을") ? 'bg-red-50 text-red-400 border-red-100' : 'bg-green-50 text-green-600 border-green-100'}`}>
@@ -201,26 +218,22 @@
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-gray-50 text-sm">
-                                        {budgets.map(b => {
+                                        {budgets.length === 0 ? <tr><td colSpan="7" className="p-16 text-gray-300">데이터가 없거나 불러오는 중입니다.</td></tr> : 
+                                        budgets.map(b => {
                                             const u = transactions.filter(t => t.budgetId === b.id).reduce((s,t) => s + (Number(t.amount) || 0), 0);
                                             const isEdit = editingId === b.id;
                                             return (
                                                 <tr key={b.id} className="hover:bg-amber-50/10 transition-colors">
                                                     <td className="p-4 text-center">
                                                         {isEdit ? <input className="w-full text-center border-2 border-amber-300 rounded font-bold outline-none" value={editForm.name} onChange={e => setEditForm({...editForm, name: e.target.value})} /> : 
-                                                        <button onClick={() => { setSelectedBudgetId(b.id); setCurrentView('detail'); }} className="font-bold text-gray-800 hover:text-amber-500 inline-flex items-center gap-1 transition-all mx-auto">{b.name} <Icon name="chevron-right" className="w-3 h-3 opacity-30" /></button>}</td>
-                                                    <td className="p-4 text-gray-900 font-bold text-center">
-                                                        {isEdit ? <input className="w-full text-center border border-amber-300 rounded outline-none" value={editForm.method} onChange={e => setEditForm({...editForm, method: e.target.value})} /> : (b.method || '-')}
-                                                    </td>
+                                                        <button onClick={() => { setSelectedBudgetId(b.id); setCurrentView('detail'); }} className="font-bold text-gray-900 hover:text-amber-500 inline-flex items-center gap-1 transition-all mx-auto">{b.name} <Icon name="chevron-right" className="w-3 h-3 opacity-30" /></button>}</td>
+                                                    <td className="p-4 text-gray-900 font-bold text-center">{isEdit ? <input className="w-full text-center border border-amber-300 rounded outline-none" value={editForm.method} onChange={e => setEditForm({...editForm, method: e.target.value})} /> : (b.method || '-')}</td>
                                                     <td className="p-4 font-bold text-gray-900 text-center">{isEdit ? <input className="w-full text-center border border-amber-300 rounded font-bold outline-none" value={toDisp(editForm.plannedAmount)} onChange={e => setEditForm({...editForm, plannedAmount: toNum(e.target.value)})} /> : fmt(b.plannedAmount)}</td>
                                                     <td className="p-4 text-gray-900 font-normal text-center">{fmt(u)}</td>
                                                     <td className="p-4 font-bold text-red-600 text-[15px] text-center">{fmt((Number(b.plannedAmount) || 0) - u)}</td>
-                                                    <td className="p-4 text-xs text-gray-800 font-bold truncate text-center">
-                                                        {isEdit ? <input className="w-full text-center border border-amber-300 rounded outline-none" value={editForm.notes} onChange={e => setEditForm({...editForm, notes: e.target.value})} /> : (b.notes || '-')}
-                                                    </td>
+                                                    <td className="p-4 text-xs text-gray-900 font-bold truncate text-center">{isEdit ? <input className="w-full text-center border border-amber-300 rounded outline-none" value={editForm.notes} onChange={e => setEditForm({...editForm, notes: e.target.value})} /> : (b.notes || '-')}</td>
                                                     <td className="p-4 text-center"><div className="flex gap-2 justify-center">{isEdit ? <><button onClick={() => doSaveEdit('budget', b.id)} className="text-green-600 p-1"><Icon name="check" /></button><button onClick={() => setEditingId(null)} className="text-gray-400 p-1"><Icon name="x" /></button></> :
-                                                        <><button onClick={() => { setEditingId(b.id); setEditForm({...b}); }} className="p-1.5 text-gray-300 hover:text-amber-500 transition-colors"><Icon name="edit-2" /></button>
-                                                          <button onClick={() => { if(confirm('삭제할까요?')) { const next = budgets.filter(x => x.id !== b.id); setBudgets(next); sync(next, transactions); }}} className="p-1.5 text-gray-300 hover:text-red-500"><Icon name="trash-2" /></button></>}</div></td>
+                                                        <><button onClick={() => { setEditingId(b.id); setEditForm({...b}); }} className="p-1.5 text-gray-300 hover:text-amber-500 transition-colors"><Icon name="edit-2" /></button><button onClick={() => { if(confirm('삭제할까요?')) { const next = budgets.filter(x => x.id !== b.id); setBudgets(next); sync(next, transactions); }}} className="p-1.5 text-gray-300 hover:text-red-500"><Icon name="trash-2" /></button></>}</div></td>
                                                 </tr>
                                             );
                                         })}
@@ -251,7 +264,7 @@
                                         <div className="md:col-span-2 space-y-1 text-center"><label className="text-[10px] font-black text-amber-700 block text-center">일자</label><input type="date" required className="w-full p-2.5 rounded-xl border border-gray-100 bg-white outline-none text-sm text-center font-bold" value={newTransaction.date} onChange={e => setNewTransaction({...newTransaction, date: e.target.value})} /></div>
                                         <div className="md:col-span-2 space-y-1 text-center"><label className="text-[10px] font-black text-amber-700 block text-center">내역</label><input required className="w-full p-2.5 rounded-xl border border-gray-100 bg-white outline-none text-sm text-center font-bold" value={newTransaction.description} onChange={e => setNewTransaction({...newTransaction, description: e.target.value})} /></div>
                                         <div className="md:col-span-2 space-y-1 text-center"><label className="text-[10px] font-black text-amber-700 block text-center">사용처</label><input className="w-full p-2.5 rounded-xl border border-gray-100 bg-white outline-none text-sm text-center font-bold" value={newTransaction.location} onChange={e => setNewTransaction({...newTransaction, location: e.target.value})} /></div>
-                                        <div className="md:col-span-2 space-y-1 font-bold text-red-600 text-center text-center"><label className="text-[10px] font-black text-red-500 block">금액 (원)</label><input required className="w-full p-2.5 rounded-xl border border-gray-100 bg-white outline-none text-sm text-center font-bold" value={toDisp(newTransaction.amount)} onChange={e => setNewTransaction({...newTransaction, amount: toNum(e.target.value)})} /></div>
+                                        <div className="md:col-span-2 space-y-1 font-bold text-red-600 text-center"><label className="text-[10px] font-black text-red-500 block">금액 (원)</label><input required className="w-full p-2.5 rounded-xl border border-gray-100 bg-white outline-none text-sm text-center font-bold" value={toDisp(newTransaction.amount)} onChange={e => setNewTransaction({...newTransaction, amount: toNum(e.target.value)})} /></div>
                                         <div className="md:col-span-2 space-y-1 text-center"><label className="text-[10px] font-black text-amber-700 block text-center">비고</label><input className="w-full p-2.5 rounded-xl border border-gray-100 bg-white outline-none text-sm text-center font-bold" value={newTransaction.notes} onChange={e => setNewTransaction({...newTransaction, notes: e.target.value})} /></div>
                                         <div className="md:col-span-2 flex gap-2"><button type="submit" className="flex-1 bg-amber-600 text-white py-3 rounded-xl font-bold text-xs shadow-md active:scale-95 transition-all">기록</button><button type="button" onClick={() => setIsAddingTransaction(false)} className="px-3 text-amber-700 font-bold text-xs">취소</button></div>
                                     </form>
@@ -268,8 +281,8 @@
                                             return (
                                                 <tr key={t.id} className="hover:bg-gray-50 transition-all text-center">
                                                     <td className="p-4 font-mono text-gray-700 text-xs text-center">{isEditTx ? <input type="date" className="w-full text-center border-2 border-amber-300 rounded py-0.5 outline-none font-bold" value={editForm.date} onChange={e => setEditForm({...editForm, date: e.target.value})} /> : t.date}</td>
-                                                    <td className="p-4 font-bold text-gray-800 text-center">{isEditTx ? <input className="w-full text-center border border-amber-300 rounded font-bold outline-none" value={editForm.description} onChange={e => setEditForm({...editForm, description: e.target.value})} /> : t.description}</td>
-                                                    <td className="p-4 text-gray-800 font-bold text-center">{isEditTx ? <input className="w-full text-center border border-amber-300 rounded outline-none" value={editForm.location} onChange={e => setEditForm({...editForm, location: e.target.value})} /> : (t.location || '-')}</td>
+                                                    <td className="p-4 font-bold text-gray-900 text-center">{isEditTx ? <input className="w-full text-center border border-amber-300 rounded font-bold outline-none" value={editForm.description} onChange={e => setEditForm({...editForm, description: e.target.value})} /> : t.description}</td>
+                                                    <td className="p-4 text-gray-900 font-bold text-center">{isEditTx ? <input className="w-full text-center border border-amber-300 rounded outline-none" value={editForm.location} onChange={e => setEditForm({...editForm, location: e.target.value})} /> : (t.location || '-')}</td>
                                                     <td className="p-4 font-black text-center">{isEditTx ? <div className="flex gap-1 justify-center items-center mx-auto"><input className="w-full text-center border border-amber-300 rounded font-black outline-none" value={toDisp(editForm.amount)} onChange={e => setEditForm({...editForm, amount: toNum(e.target.value)})} /><span className="text-[9px]">원</span></div> : fmt(t.amount)}</td>
                                                     <td className="p-4 text-xs text-gray-900 truncate font-bold text-center">{isEditTx ? <input className="w-full text-center border border-amber-300 rounded outline-none font-normal" value={editForm.notes} onChange={e => setEditForm({...editForm, notes: e.target.value})} /> : (t.notes || '-')}</td>
                                                     <td className="p-4 text-center"><div className="flex gap-2 justify-center">{isEditTx ? <><button onClick={() => doSaveEdit('transaction', t.id)} className="text-green-600 p-1"><Icon name="check" /></button><button onClick={() => setEditingId(null)} className="text-gray-400 p-1"><Icon name="x" /></button></> :
